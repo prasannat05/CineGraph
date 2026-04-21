@@ -10,6 +10,11 @@
         .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
         .dropdown-item:hover { background: #1e293b; cursor: pointer; color: #3b82f6; }
         .movie-card:hover { transform: scale(1.03); border-color: #3b82f6; }
+        .graph-node { fill: #0f172a; stroke: #3b82f6; stroke-width: 2; }
+        .graph-node-main { fill: #1e3a8a; stroke: #93c5fd; stroke-width: 3; }
+        .graph-link { stroke: rgba(148, 163, 184, 0.45); stroke-width: 2; }
+        .graph-label { fill: #e2e8f0; font-size: 12px; font-weight: 700; text-anchor: middle; }
+        .graph-backdrop { background: rgba(2, 6, 23, 0.78); backdrop-filter: blur(10px); }
     </style>
 </head>
 <body class="p-6">
@@ -39,13 +44,136 @@
 
         <div id="metaInfo" class="mb-10 text-center text-slate-400"></div>
 
+        <div id="graphControls" class="hidden mb-10 text-center">
+            <button id="graphBtn" type="button" class="glass px-6 py-3 rounded-2xl font-bold text-sm uppercase tracking-[0.25em] text-blue-300 hover:text-white hover:border-blue-400 transition-all">
+                <i class="fa-solid fa-circle-nodes mr-2"></i>
+                View Knowledge Graph
+            </button>
+        </div>
+
         <div id="results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10"></div>
+    </div>
+
+    <div id="graphModal" class="hidden fixed inset-0 z-[100] graph-backdrop p-4">
+        <div class="max-w-5xl mx-auto h-full flex items-center justify-center">
+            <div class="glass w-full rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+                <div class="flex items-center justify-between px-6 py-5 border-b border-slate-800">
+                    <div>
+                        <p class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">Dashboard Graph View</p>
+                        <h2 class="text-2xl font-black text-white">Knowledge Graph</h2>
+                    </div>
+                    <button id="closeGraphBtn" type="button" class="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
+                </div>
+                <div class="p-6">
+                    <p id="graphCaption" class="text-slate-400 mb-4 text-sm"></p>
+                    <div class="rounded-[1.5rem] border border-slate-800 bg-slate-950/70 overflow-hidden">
+                        <svg id="graphCanvas" viewBox="0 0 900 520" class="w-full h-[520px]"></svg>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         const OMDB_KEY = "e8b1f1e4";
         const input = document.getElementById('movieIn');
         const dropdown = document.getElementById('autocomplete');
+        const meta = document.getElementById('metaInfo');
+        const graphControls = document.getElementById('graphControls');
+        const graphBtn = document.getElementById('graphBtn');
+        const graphModal = document.getElementById('graphModal');
+        const closeGraphBtn = document.getElementById('closeGraphBtn');
+        const graphCanvas = document.getElementById('graphCanvas');
+        const graphCaption = document.getElementById('graphCaption');
+        let latestGraphPayload = null;
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function wrapLabel(text, limit = 16) {
+            const words = String(text).split(' ');
+            const lines = [];
+            let currentLine = '';
+
+            for (const word of words) {
+                const nextLine = currentLine ? `${currentLine} ${word}` : word;
+                if (nextLine.length <= limit) {
+                    currentLine = nextLine;
+                } else {
+                    if (currentLine) lines.push(currentLine);
+                    currentLine = word;
+                }
+            }
+
+            if (currentLine) lines.push(currentLine);
+            return lines.slice(0, 3);
+        }
+
+        function renderKnowledgeGraph() {
+            if (!latestGraphPayload) return;
+
+            const center = { x: 450, y: 250 };
+            const radius = 185;
+            const nodes = latestGraphPayload.data.map((movie, index, list) => {
+                const angle = (-Math.PI / 2) + ((Math.PI * 2) / list.length) * index;
+                return {
+                    title: movie.title,
+                    x: center.x + Math.cos(angle) * radius,
+                    y: center.y + Math.sin(angle) * radius
+                };
+            });
+
+            const linksMarkup = nodes.map(node => `
+                <line class="graph-link" x1="${center.x}" y1="${center.y}" x2="${node.x}" y2="${node.y}"></line>
+            `).join('');
+
+            const centerMarkup = `
+                <circle class="graph-node-main" cx="${center.x}" cy="${center.y}" r="68"></circle>
+                <text class="graph-label" x="${center.x}" y="${center.y - 10}">
+                    ${wrapLabel(latestGraphPayload.searched_for, 14).map((line, idx) => `<tspan x="${center.x}" dy="${idx === 0 ? 0 : 16}">${escapeHtml(line)}</tspan>`).join('')}
+                </text>
+                <text x="${center.x}" y="${center.y + 42}" fill="#bfdbfe" font-size="11" text-anchor="middle" letter-spacing="2">SOURCE NODE</text>
+            `;
+            const nodeMarkup = nodes.map(node => `
+                <g>
+                    <circle class="graph-node" cx="${node.x}" cy="${node.y}" r="52"></circle>
+                    <text class="graph-label" x="${node.x}" y="${node.y - 6}">
+                        ${wrapLabel(node.title).map((line, idx) => `<tspan x="${node.x}" dy="${idx === 0 ? 0 : 15}">${escapeHtml(line)}</tspan>`).join('')}
+                    </text>
+                </g>
+            `).join('');
+
+            graphCanvas.innerHTML = `
+                <defs>
+                    <radialGradient id="graphGlow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="rgba(59,130,246,0.2)"></stop>
+                        <stop offset="100%" stop-color="rgba(15,23,42,0)"></stop>
+                    </radialGradient>
+                </defs>
+                <rect x="0" y="0" width="900" height="520" fill="url(#graphGlow)"></rect>
+                ${linksMarkup}
+                ${centerMarkup}
+                ${nodeMarkup}
+            `;
+
+            graphCaption.innerHTML = `Visual semantic neighborhood for <span class="text-blue-300 font-bold">"${escapeHtml(latestGraphPayload.searched_for)}"</span>`;
+        }
+
+        function openKnowledgeGraph() {
+            if (!latestGraphPayload) return;
+            renderKnowledgeGraph();
+            graphModal.classList.remove('hidden');
+        }
+
+        function closeKnowledgeGraph() {
+            graphModal.classList.add('hidden');
+        }
 
         // Autocomplete Listener
         input.addEventListener('input', async (e) => {
@@ -77,13 +205,14 @@
             const val = input.value;
             const resDiv = document.getElementById('results');
             const loader = document.getElementById('loader');
-            const meta = document.getElementById('metaInfo');
 
             if (!val) return;
-            resDiv.innerHTML = ''; 
+            resDiv.innerHTML = '';
             dropdown.classList.add('hidden');
             loader.classList.remove('hidden');
             meta.innerHTML = '';
+            graphControls.classList.add('hidden');
+            latestGraphPayload = null;
 
             try {
                 const response = await fetch(`http://127.0.0.1:8000/recommend?title=${encodeURIComponent(val)}`);
@@ -96,6 +225,8 @@
                 }
 
                 meta.innerHTML = `Showing semantic neighbors for: <span class="text-blue-400 font-black">"${result.searched_for}"</span>`;
+                latestGraphPayload = result;
+                graphControls.classList.remove('hidden');
                 
                 for (let movie of result.data) {
                     // Fetch Poster from OMDb
@@ -129,12 +260,22 @@
             }
         }
 
+        graphBtn.addEventListener('click', openKnowledgeGraph);
+        closeGraphBtn.addEventListener('click', closeKnowledgeGraph);
+        graphModal.addEventListener('click', (e) => {
+            if (e.target === graphModal) closeKnowledgeGraph();
+        });
+
         // Support Enter key
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 dropdown.classList.add('hidden');
                 startRecommendation();
             }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeKnowledgeGraph();
         });
     </script>
 </body>
