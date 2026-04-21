@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CineGraph | AI Recommender</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background: #020617; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
+        .dropdown-item:hover { background: #1e293b; cursor: pointer; color: #3b82f6; }
+        .movie-card:hover { transform: scale(1.03); border-color: #3b82f6; }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-6xl mx-auto py-10">
+        <div class="text-center mb-16">
+            <h1 class="text-6xl font-black tracking-tighter mb-4">CINE<span class="text-blue-500">GRAPH</span></h1>
+            <p class="text-slate-500 uppercase tracking-widest text-sm font-bold">Semantic Labelling • Knowledge Graph • Transformers</p>
+        </div>
+
+        <div class="relative max-w-2xl mx-auto mb-20 z-50">
+            <div class="glass p-2 rounded-2xl flex items-center shadow-2xl transition-all focus-within:ring-2 focus-within:ring-blue-500">
+                <i class="fa-solid fa-magnifying-glass ml-5 text-slate-500"></i>
+                <input id="movieIn" type="text" autocomplete="off" 
+                    placeholder="Search movie title (e.g. Avatar)..." 
+                    class="bg-transparent flex-1 px-5 py-4 outline-none text-xl text-white">
+                <button onclick="startRecommendation()" class="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-xl font-bold transition-all shadow-lg">
+                    DISCOVER
+                </button>
+            </div>
+            <div id="autocomplete" class="absolute w-full mt-2 glass rounded-xl overflow-hidden hidden shadow-2xl border border-slate-700"></div>
+        </div>
+
+        <div id="loader" class="hidden text-center py-10">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-blue-500 mx-auto mb-4"></div>
+            <p class="text-blue-400 font-mono tracking-tighter">PROCESSING SEMANTIC VECTORS...</p>
+        </div>
+
+        <div id="metaInfo" class="mb-10 text-center text-slate-400"></div>
+
+        <div id="results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10"></div>
+    </div>
+
+    <script>
+        const OMDB_KEY = "e8b1f1e4";
+        const input = document.getElementById('movieIn');
+        const dropdown = document.getElementById('autocomplete');
+
+        // Autocomplete Listener
+        input.addEventListener('input', async (e) => {
+            const query = e.target.value;
+            if (query.length < 2) { dropdown.classList.add('hidden'); return; }
+            
+            try {
+                const res = await fetch(`http://127.0.0.1:8000/search?query=${encodeURIComponent(query)}`);
+                const titles = await res.json();
+                if (titles.length) {
+                    dropdown.innerHTML = titles.map(t => `<div class="dropdown-item p-4 border-b border-slate-800/30 font-medium">${t}</div>`).join('');
+                    dropdown.classList.remove('hidden');
+                } else {
+                    dropdown.classList.add('hidden');
+                }
+            } catch (err) { console.error("Search failed"); }
+        });
+
+        // Dropdown selection
+        dropdown.addEventListener('click', (e) => {
+            if (e.target.classList.contains('dropdown-item')) {
+                input.value = e.target.innerText;
+                dropdown.classList.add('hidden');
+                startRecommendation();
+            }
+        });
+
+        async function startRecommendation() {
+            const val = input.value;
+            const resDiv = document.getElementById('results');
+            const loader = document.getElementById('loader');
+            const meta = document.getElementById('metaInfo');
+
+            if (!val) return;
+            resDiv.innerHTML = ''; 
+            dropdown.classList.add('hidden');
+            loader.classList.remove('hidden');
+            meta.innerHTML = '';
+
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/recommend?title=${encodeURIComponent(val)}`);
+                const result = await response.json();
+                loader.classList.add('hidden');
+
+                if (result.error) {
+                    meta.innerHTML = `<span class="text-red-500 font-bold">${result.error}</span>`;
+                    return;
+                }
+
+                meta.innerHTML = `Showing semantic neighbors for: <span class="text-blue-400 font-black">"${result.searched_for}"</span>`;
+                
+                for (let movie of result.data) {
+                    // Fetch Poster from OMDb
+                    const omdb = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(movie.title)}&apikey=${OMDB_KEY}`).then(r => r.json());
+                    const poster = omdb.Poster && omdb.Poster !== "N/A" ? omdb.Poster : "https://via.placeholder.com/400x600?text=Poster+Not+Found";
+                    
+                    resDiv.innerHTML += `
+                        <div class="glass rounded-3xl overflow-hidden movie-card transition-all duration-300 border border-slate-800 flex flex-col">
+                            <img src="${poster}" class="w-full h-80 object-cover opacity-90">
+                            <div class="p-6 flex-1 flex flex-col">
+                                <div class="flex justify-between items-start mb-3">
+                                    <h3 class="font-bold text-xl text-white leading-tight">${movie.title}</h3>
+                                    <span class="text-yellow-500 font-bold flex items-center gap-1">
+                                        <i class="fa-solid fa-star text-[10px]"></i> ${movie.rating}
+                                    </span>
+                                </div>
+                                <div class="flex flex-wrap gap-2 mb-4">
+                                    ${movie.genres.split(' ').slice(0,2).map(g => `<span class="bg-blue-500/10 text-blue-400 text-[10px] px-2 py-1 rounded font-black uppercase tracking-tighter border border-blue-500/20">${g}</span>`).join('')}
+                                </div>
+                                <p class="text-slate-400 text-xs line-clamp-3 mb-6 leading-relaxed italic">${movie.overview}</p>
+                                <div class="mt-auto pt-4 border-t border-slate-800 flex justify-between items-center">
+                                    <span class="text-[9px] text-slate-600 font-mono">NODE_CONNECTED</span>
+                                    <i class="fa-solid fa-circle-nodes text-blue-900 text-sm"></i>
+                                </div>
+                            </div>
+                        </div>`;
+                }
+            } catch(e) { 
+                loader.classList.add('hidden'); 
+                meta.innerHTML = "Backend connection error. Please run app.py."; 
+            }
+        }
+
+        // Support Enter key
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                dropdown.classList.add('hidden');
+                startRecommendation();
+            }
+        });
+    </script>
+</body>
+</html>
